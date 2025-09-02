@@ -14,11 +14,8 @@ start_time = time.time()
 
 @app.post('/predict', response_model=RaceCarPredictResponseDto)
 def predict(request: RaceCarPredictRequestDto = Body(...)):
-    action = return_action(request.dict())
-    return RaceCarPredictResponseDto(
-        action_type=action['action_type'],
-        actions=action['actions']
-    )
+    actions = return_action(request.dict())
+    return RaceCarPredictResponseDto(actions=actions)
 
 @app.get('/api')
 def hello():
