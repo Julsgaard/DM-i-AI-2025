@@ -22,7 +22,7 @@ Within game_loop, change get_action() to your custom models prediction for local
 # TODO: First priority - At the moment the race-car accelerates more after having turned, as it is trying to catch up
 #  because it was not able to accelerate while turning. This creates problems because cars will then be spawning faster
 #  than usual because of this sudden acceleration.
-# TODO: First priority - Use more sensors for example the front_left_front and front_right_front.
+# TODO: First priority - TEST THIS WITH SEED 3 - Use more sensors for example the front_left_front and front_right_front.
 #  These can determine if there is a car coming in the other lane. left_side_back, left_side_front, left_side,
 #  right_side_front, right_side, right_side_back are also important to check if there is a car there.
 #  It should not navigate into one of these if there is a car and if there is no option then deaccelarate if the car is
@@ -59,7 +59,6 @@ MAX_TARGET_VX = 999 # The maximum target VX
 RAMP_PER_TICK = 0.05 # vx gained per tick
 RAMP_TICKS = 0 # only counts when NOT steering
 # pause_acceleration = False # We need to pause the acceleration while steering or else it accelerates too quickly after a turn
-MAX_TARGET_AHEAD = 0.6 # don't let target exceed current vx by > 0.6
 CURRENT_TARGET_VX = BASE_TARGET_VX  # computed each call
 
 REL_TOL = 1e-6
@@ -169,6 +168,10 @@ def _step_lane_action():
     return act
 
 def _speed_action(state):
+    # pause accel/decel while steering
+    if MODE != "IDLE":
+        return "NOTHING"
+
     vx = float((state.get("velocity") or {}).get("x", 0.0) or 0.0)
     print("vx", vx)
 
@@ -190,7 +193,9 @@ def _reset_state():
     global MODE, STEPS_LEFT
     global PREV_FRONT, PREV_BACK, TREND_FRONT, TREND_BACK
     global LAST_TICK
+    global RAMP_TICKS
 
+    RAMP_TICKS = 0
     MODE = "IDLE"
     STEPS_LEFT = 0
     PREV_FRONT = None
@@ -201,26 +206,35 @@ def _reset_state():
 
 
 def return_action(state: dict):
-    global LAST_TICK, MODE, TARGET_VX, CURRENT_TARGET_VX
+    global LAST_TICK, MODE, TARGET_VX, CURRENT_TARGET_VX, RAMP_TICKS
+
     t = int((state.get("elapsed_ticks") or 0))
     did_crash = bool(state.get("did_crash", False))
 
     # Reset variables
     if did_crash or t == 0 or (LAST_TICK is not None and t < LAST_TICK):
         _reset_state()
+
+    # --- RAMP that ignores steering time ---
+    # compute dt using the *previous* LAST_TICK (don't overwrite it yet)
+    prev_t = LAST_TICK
+    dt = 0 if prev_t is None else max(0, t - prev_t)
+
+    if MODE == "IDLE":
+        # only count idle time; steering time doesn't increase the ramp
+        RAMP_TICKS += dt
+    # now update LAST_TICK for the next call
     LAST_TICK = t
 
-    # ramp TARGET_VX gently with ticks (bounded)
-    base_target = BASE_TARGET_VX + RAMP_PER_TICK * t
+    base_target = BASE_TARGET_VX + RAMP_PER_TICK * RAMP_TICKS
     target = min(MAX_TARGET_VX, base_target)
 
-    # Optional adaptive nudge: if something is actually closing, bias a bit.
-    # (TREND_* already updated in _maybe_start_switch)
+    # Optional adaptive nudge (unchanged)
     try:
         if TREND_FRONT >= TREND_MIN and TREND_BACK == 0:
-            target -= 0.4  # ease off if front is closing
+            target -= 0.4
         elif TREND_BACK >= TREND_MIN and TREND_FRONT == 0:
-            target += 0.4  # speed up a touch if back is closing
+            target += 0.4
     except NameError:
         pass
 
@@ -241,10 +255,12 @@ def return_action(state: dict):
     return actions
 
 
+
+
 if __name__ == '__main__':
     import pygame
     from src.game.core import initialize_game_state, game_loop
-    seed_value = 2
+    seed_value = 3
     pygame.init()
     initialize_game_state("http://localhost:9052/predict", seed_value)
     game_loop(verbose=True) # For pygame window
