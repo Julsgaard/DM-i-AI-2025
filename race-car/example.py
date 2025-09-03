@@ -40,7 +40,7 @@ TREND_EPS = 5.0 # pixels change to consider "meaningful"
 TREND_MIN = 2 # need this many consecutive "getting closer" ticks to trigger
 
 # Tunables
-BATCH_SIZE = 8
+BATCH_SIZE = 1
 N_SWITCH = 48
 BLOCK_THR = 950.0 # obstacle if sensor < this
 TARGET_VX = 20
