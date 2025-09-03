@@ -42,7 +42,7 @@ trend_front = 0
 trend_back = 0
 # Trend sensitivity
 trend_eps = 5.0 # Pixels change to consider "meaningful"
-trend_min = 2 # Need this many consecutive "getting closer" ticks to trigger TODO: Can maybe be 1?
+trend_min = 1 # Need this many consecutive "getting closer" ticks to trigger TODO: Can maybe be 1?
 
 batch_size = 6 # How many actions performed per call
 n_switch = 48 # Steps per half-switch (A or B)
@@ -51,12 +51,14 @@ target_vx = 20 # Desired vx - Is updated each call
 vx_band = 0.15 # Dead zone around target_vx
 base_target_vx = 10.05 # Start slow
 max_target_vx = 999 # The maximum target VX
-ramp_per_tick = 0.05 # vx gained per tick
+ramp_per_tick = 0.045 # vx gained per tick
 ramp_ticks = 0 # Only counts when NOT steering
 current_target_vx = base_target_vx  # Computed each call
 
 # For when sides are blocked
 side_clear_thr = 350.0 # If side sensors < this, consider it blocked
+front_safe_thr = 850.0 # How far the forward-diagonal must be to enter that lane
+side_gap_thr   = 325.0 # Min clearance beside you in target lane to be safe
 pending_escape = False # True if we need to escape a blocked side
 
 rel_tol = 1e-6 # For math.isclose
@@ -73,6 +75,8 @@ right_fwd  = ("front_right_front", "right_front", "right_side_front")
 right_back = ("right_side_back", "right_back", "back_right_back")
 left_back  = ("back_left_back", "left_back", "left_side_back")
 
+LEFT_SIDE_GROUP  = ("left_side_front", "left_side", "left_side_back")
+RIGHT_SIDE_GROUP = ("right_side_front", "right_side", "right_side_back")
 
 def _sensor(state, name, default=1000.0):
     return float((state.get("sensors") or {}).get(name, default) or default)
@@ -92,7 +96,7 @@ def _maybe_start_switch(state):
     front = _sensor(state, "front", 1000.0)
     back  = _sensor(state, "back", 1000.0)
 
-    # Update trends - are the cars getting closer or further away?
+    # Update trends - Are the cars getting closer or further away?
     if prev_front is not None:
         if front < prev_front - trend_eps:
             trend_front += 1 # Getting closer
@@ -122,37 +126,41 @@ def _maybe_start_switch(state):
     if not trigger:
         return
 
-    # Compute side clearance using both front and back groups
-    left_f = _min_of(state, left_fwd)
-    left_b = _min_of(state, left_back)
-    right_f = _min_of(state, right_fwd)
-    right_b = _min_of(state, right_back)
+    # TODO: MAKE SURE THIS IS CORRECT!!!!
+    # Forward-diagonals (primary look-ahead per side)
+    flf = _sensor(state, "front_left_front", 1000.0)
+    frf = _sensor(state, "front_right_front", 1000.0)
 
-    # A side is enterable only if both its front and back are clear enough
-    left_enterable = min(left_f, left_b) >= side_clear_thr
-    right_enterable = min(right_f, right_b) >= side_clear_thr
+    # Rear clearance per side
+    left_back_min = _min_of(state, left_back)
+    right_back_min = _min_of(state, right_back)
 
-    # TODO: Should probably not run the target velocity while in escape mode
-    # Boxed-in check
+    # Side-adjacent gaps (cars alongside you in that lane)
+    left_side_min = _min_of(state, LEFT_SIDE_GROUP)
+    right_side_min = _min_of(state, RIGHT_SIDE_GROUP)
+
+    # A side is enterable only if ALL three checks pass:
+    # (1) forward-diagonal, (2) rear gap, (3) side-adjacent gap
+    left_enterable = (flf >= front_safe_thr) and (left_back_min >= side_clear_thr) and (left_side_min >= side_gap_thr)
+    right_enterable = (frf >= front_safe_thr) and (right_back_min >= side_clear_thr) and (right_side_min >= side_gap_thr)
+
+    # Boxed in? -> stay in escape mode do not start a turn yet
     if not left_enterable and not right_enterable:
-        # No safe lane to enter now. Stay in escape mode - Meaning that it does not start a turn and starts decelerating
         pending_escape = True
         return
     else:
-        # At least one side is fully clear before we can exit escape mode
         pending_escape = False
 
-    # Pick side to switch into
-    # Prefer a fully enterable side - If both are enterable, choose the CLEARER one
-    # This also helps with staying in the middle lane
+    # Choose side - prefer any enterable side; if both, pick the one with the larger bottleneck margin
+    # Bottleneck = the tightest of the three constraints
+    left_bottleneck = min(flf, left_back_min, left_side_min)
+    right_bottleneck = min(frf, right_back_min, right_side_min)
+
     if left_enterable and not right_enterable:
         mode = "LEFT_A"
     elif right_enterable and not left_enterable:
         mode = "RIGHT_A"
     else:
-        # Both enterable - Choose the side with the larger bottleneck distance
-        left_bottleneck = min(left_f, left_b)
-        right_bottleneck = min(right_f, right_b)
         mode = "RIGHT_A" if right_bottleneck >= left_bottleneck else "LEFT_A"
 
     steps_left = n_switch
