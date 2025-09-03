@@ -1,5 +1,3 @@
-import random
-from typing import List
 import math
 
 
@@ -33,9 +31,9 @@ Within game_loop, change get_action() to your custom models prediction for local
 # TODO: Second priority - It needs to decide whether it should deaccelerate or steer left or right
 # TODO: Second priority - It should try to stay in the middle lane. Or atleast not be in the lanes at the edge/wall of the map
 
-# Tiny state (persists across calls)
+# State variables for lane switching
 mode = "IDLE" # IDLE | RIGHT_A | RIGHT_B | LEFT_A | LEFT_B
-steps_left = 0
+steps_left = 0 # Steps left in current mode
 
 # Remember last distances + trend counters
 prev_front = None
@@ -43,22 +41,22 @@ prev_back = None
 trend_front = 0
 trend_back = 0
 # Trend sensitivity
-trend_eps = 5.0 # pixels change to consider "meaningful"
-trend_min = 2 # need this many consecutive "getting closer" ticks to trigger TODO: Can maybe be 1?
+trend_eps = 5.0 # Pixels change to consider "meaningful"
+trend_min = 2 # Need this many consecutive "getting closer" ticks to trigger TODO: Can maybe be 1?
 
-batch_size = 6 # how many actions performed per call
-n_switch = 48 # steps per half-switch (A or B)
-block_thr = 999.0 # obstacle if sensor < this
-target_vx = 20 # desired vx - Is updated each call
-vx_band = 0.15 # dead zone around target_vx
-base_target_vx = 10.05 # start slow
+batch_size = 6 # How many actions performed per call
+n_switch = 48 # Steps per half-switch (A or B)
+block_thr = 999.0 # Obstacle if sensor < this
+target_vx = 20 # Desired vx - Is updated each call
+vx_band = 0.15 # Dead zone around target_vx
+base_target_vx = 10.05 # Start slow
 max_target_vx = 999 # The maximum target VX
 ramp_per_tick = 0.05 # vx gained per tick
-ramp_ticks = 0 # only counts when NOT steering
-current_target_vx = base_target_vx  # computed each call
+ramp_ticks = 0 # Only counts when NOT steering
+current_target_vx = base_target_vx  # Computed each call
 
-rel_tol = 1e-6
-abs_tol = 1e-3
+rel_tol = 1e-6 # For math.isclose
+abs_tol = 1e-3 # For math.isclose
 
 # TODO: ---DONE--- It needs to gradually accelerate infinitely. This is because the cars are spawning at the same speed as the race-car.
 #  If i only accelerate it will be too fast to dodge, but if i gradually accelerate it might be enough to dodge.
@@ -66,10 +64,10 @@ abs_tol = 1e-3
 #  This is confirmed by what it says in place_car function in core.py
 
 # Sensor groups
-LEFT_FWD   = ("front_left_front", "left_side_front")
-RIGHT_FWD  = ("front_right_front", "right_side_front")
-LEFT_BACK  = ("back_left_back", "left_side_back")
-RIGHT_BACK = ("back_right_back", "right_side_back")
+left_fwd   = ("front_left_front", "left_side_front")
+right_fwd  = ("front_right_front", "right_side_front")
+left_back  = ("back_left_back", "left_side_back")
+right_back = ("back_right_back", "right_side_back")
 
 
 def _sensor(state, name, default=1000.0):
@@ -123,11 +121,11 @@ def _maybe_start_switch(state):
         return
 
     if trigger == "FRONT":
-        left_clear = _min_of(state, LEFT_FWD)
-        right_clear = _min_of(state, RIGHT_FWD)
+        left_clear = _min_of(state, left_fwd)
+        right_clear = _min_of(state, right_fwd)
     else:
-        left_clear = _min_of(state, LEFT_BACK)
-        right_clear = _min_of(state, RIGHT_BACK)
+        left_clear = _min_of(state, left_back)
+        right_clear = _min_of(state, right_back)
 
     # Pick the clearer side
     if right_clear >= left_clear:
