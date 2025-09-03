@@ -42,9 +42,14 @@ TREND_MIN = 2 # need this many consecutive "getting closer" ticks to trigger
 # Tunables
 BATCH_SIZE = 8
 N_SWITCH = 48
-BLOCK_THR = 980.0 # obstacle if sensor < this
+BLOCK_THR = 950.0 # obstacle if sensor < this
 TARGET_VX = 20
 VX_BAND = 0.15
+BASE_TARGET_VX = 10     # start slow
+MAX_TARGET_VX  = 999    # The maximum target VX
+RAMP_PER_TICK  = 0.03   # vx gained per tick
+CURRENT_TARGET_VX = BASE_TARGET_VX  # computed each call
+
 REL_TOL = 1e-6
 ABS_TOL = 1e-3
 
@@ -184,18 +189,33 @@ def _reset_state():
 
 def return_action(state: dict):
     global LAST_TICK
-
     t = int((state.get("elapsed_ticks") or 0))
     did_crash = bool(state.get("did_crash", False))
 
-    # Auto-reset on:
-    # - first tick of a new run,
-    # - crash,
-    # - or when ticks jump backwards (sim restarted)
+    # Reset variables
     if did_crash or t == 0 or (LAST_TICK is not None and t < LAST_TICK):
         _reset_state()
-
     LAST_TICK = t
+
+    # --- NEW: ramp TARGET_VX gently with ticks (bounded) ---
+    global TARGET_VX, CURRENT_TARGET_VX
+    base_target = BASE_TARGET_VX + RAMP_PER_TICK * t
+    target = min(MAX_TARGET_VX, base_target)
+
+    # Optional adaptive nudge: if something is actually closing, bias a bit.
+    # (TREND_* already updated in _maybe_start_switch)
+    try:
+        if TREND_FRONT >= TREND_MIN and TREND_BACK == 0:
+            target -= 0.4  # ease off if front is closing
+        elif TREND_BACK >= TREND_MIN and TREND_FRONT == 0:
+            target += 0.4  # speed up a touch if back is closing
+    except NameError:
+        pass
+
+    # Clamp and apply
+    CURRENT_TARGET_VX = max(BASE_TARGET_VX, min(MAX_TARGET_VX, target))
+    TARGET_VX = CURRENT_TARGET_VX
+    # --- end NEW ---
 
     global MODE
 
@@ -204,16 +224,13 @@ def return_action(state: dict):
         _maybe_start_switch(state)
 
     actions = []
-
-    # Fill the batch: lane switch has priority; otherwise speed control
     for _ in range(BATCH_SIZE):
         if MODE != "IDLE":
             actions.append(_step_lane_action())
         else:
-            # keep heading steady; just regulate speed
             actions.append(_speed_action(state))
-
     return actions
+
 
 
 
