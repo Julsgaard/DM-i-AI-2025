@@ -22,11 +22,12 @@ Within game_loop, change get_action() to your custom models prediction for local
 # TODO: First priority - At the moment the race-car accelerates more after having turned, as it is trying to catch up
 #  because it was not able to accelerate while turning. This creates problems because cars will then be spawning faster
 #  than usual because of this sudden acceleration.
-# TODO: First priority - TEST THIS WITH SEED 3 - Use more sensors for example the front_left_front and front_right_front.
+# TODO: First priority - TEST THIS WITH SEED 5 AND 6 - Use more sensors for example the front_left_front and front_right_front.
 #  These can determine if there is a car coming in the other lane. left_side_back, left_side_front, left_side,
 #  right_side_front, right_side, right_side_back are also important to check if there is a car there.
 #  It should not navigate into one of these if there is a car and if there is no option then deaccelarate if the car is
-#  coming in front and accelerate if it is coming from behind.
+#  coming in front and accelerate if it is coming from behind (CAN BE TESTED WITH SEED 4, 7 AND 8).
+# TODO: First Priority - SEED 3 - Almost impossible seed
 # TODO: Second priority - It accelerates the same amount as the batch size and then it does nothing for the same amount as the batch size.
 #  This might create problems.
 # TODO: Second priority - It needs to decide whether it should deaccelerate or steer left or right
@@ -56,7 +57,7 @@ TARGET_VX = 20
 VX_BAND = 0.15
 BASE_TARGET_VX = 10.05 # start slow
 MAX_TARGET_VX = 999 # The maximum target VX
-RAMP_PER_TICK = 0.05 # vx gained per tick
+RAMP_PER_TICK = 0.1 # vx gained per tick
 RAMP_TICKS = 0 # only counts when NOT steering
 # pause_acceleration = False # We need to pause the acceleration while steering or else it accelerates too quickly after a turn
 CURRENT_TARGET_VX = BASE_TARGET_VX  # computed each call
@@ -260,7 +261,7 @@ def return_action(state: dict):
 if __name__ == '__main__':
     import pygame
     from src.game.core import initialize_game_state, game_loop
-    seed_value = 3
+    seed_value = 8
     pygame.init()
     initialize_game_state("http://localhost:9052/predict", seed_value)
     game_loop(verbose=True) # For pygame window
