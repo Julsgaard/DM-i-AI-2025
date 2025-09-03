@@ -45,9 +45,9 @@ N_SWITCH = 48
 BLOCK_THR = 950.0 # obstacle if sensor < this
 TARGET_VX = 20
 VX_BAND = 0.15
-BASE_TARGET_VX = 10     # start slow
-MAX_TARGET_VX  = 999    # The maximum target VX
-RAMP_PER_TICK  = 0.05   # vx gained per tick
+BASE_TARGET_VX = 10 # start slow
+MAX_TARGET_VX  = 999 # The maximum target VX
+RAMP_PER_TICK  = 0.05 # vx gained per tick
 CURRENT_TARGET_VX = BASE_TARGET_VX  # computed each call
 
 REL_TOL = 1e-6
