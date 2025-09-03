@@ -32,45 +32,40 @@ Within game_loop, change get_action() to your custom models prediction for local
 #  This might create problems.
 # TODO: Second priority - It needs to decide whether it should deaccelerate or steer left or right
 # TODO: Second priority - It should try to stay in the middle lane. Or atleast not be in the lanes at the edge/wall of the map
-# Triggers on front sensor < BLOCK_THR
-# Chooses the clearer side (right vs left) using two forward-diagonal sensors.
-# Switch = N steps to side (A) + N steps back (B) to re-straighten, then IDLE.
 
 # Tiny state (persists across calls)
-MODE = "IDLE" # IDLE | RIGHT_A | RIGHT_B | LEFT_A | LEFT_B
-STEPS_LEFT = 0
+mode = "IDLE" # IDLE | RIGHT_A | RIGHT_B | LEFT_A | LEFT_B
+steps_left = 0
 
 # Remember last distances + trend counters
-PREV_FRONT = None
-PREV_BACK = None
-TREND_FRONT = 0
-TREND_BACK = 0
+prev_front = None
+prev_back = None
+trend_front = 0
+trend_back = 0
 # Trend sensitivity
-TREND_EPS = 5.0 # pixels change to consider "meaningful"
-TREND_MIN = 2 # need this many consecutive "getting closer" ticks to trigger
+trend_eps = 5.0 # pixels change to consider "meaningful"
+trend_min = 2 # need this many consecutive "getting closer" ticks to trigger TODO: Can maybe be 1?
 
-# Tunables
-BATCH_SIZE = 6
-N_SWITCH = 48
-BLOCK_THR = 999.0 # obstacle if sensor < this
-TARGET_VX = 20
-VX_BAND = 0.15
-BASE_TARGET_VX = 10.05 # start slow
-MAX_TARGET_VX = 999 # The maximum target VX
-RAMP_PER_TICK = 0.1 # vx gained per tick
-RAMP_TICKS = 0 # only counts when NOT steering
-# pause_acceleration = False # We need to pause the acceleration while steering or else it accelerates too quickly after a turn
-CURRENT_TARGET_VX = BASE_TARGET_VX  # computed each call
+batch_size = 6 # how many actions performed per call
+n_switch = 48 # steps per half-switch (A or B)
+block_thr = 999.0 # obstacle if sensor < this
+target_vx = 20 # desired vx - Is updated each call
+vx_band = 0.15 # dead zone around target_vx
+base_target_vx = 10.05 # start slow
+max_target_vx = 999 # The maximum target VX
+ramp_per_tick = 0.05 # vx gained per tick
+ramp_ticks = 0 # only counts when NOT steering
+current_target_vx = base_target_vx  # computed each call
 
-REL_TOL = 1e-6
-ABS_TOL = 1e-3
+rel_tol = 1e-6
+abs_tol = 1e-3
 
 # TODO: ---DONE--- It needs to gradually accelerate infinitely. This is because the cars are spawning at the same speed as the race-car.
 #  If i only accelerate it will be too fast to dodge, but if i gradually accelerate it might be enough to dodge.
 #  I think that even though you are moving at 100 velocity the cars will spawn at the same speed.
 #  This is confirmed by what it says in place_car function in core.py
 
-# Sensor groups (use the names you already have in your sim payload)
+# Sensor groups
 LEFT_FWD   = ("front_left_front", "left_side_front")
 RIGHT_FWD  = ("front_right_front", "right_side_front")
 LEFT_BACK  = ("back_left_back", "left_side_back")
@@ -91,86 +86,86 @@ def _maybe_start_switch(state):
     Choose clearer side: compare left vs right groups (front case uses FWD groups,
     back case uses BACK groups). No randomness.
     """
-    global MODE, STEPS_LEFT
-    global PREV_FRONT, PREV_BACK, TREND_FRONT, TREND_BACK
+    global mode, steps_left
+    global prev_front, prev_back, trend_front, trend_back
 
     front = _sensor(state, "front", 1000.0)
     back  = _sensor(state, "back", 1000.0)
 
     # update trends (are they getting closer or farther?)
-    if PREV_FRONT is not None:
-        if front < PREV_FRONT - TREND_EPS:
-            TREND_FRONT += 1 # getting closer
-        elif front > PREV_FRONT + TREND_EPS:
-            TREND_FRONT = 0 # moving away -> cancel trend
+    if prev_front is not None:
+        if front < prev_front - trend_eps:
+            trend_front += 1 # getting closer
+        elif front > prev_front + trend_eps:
+            trend_front = 0 # moving away -> cancel trend
         # else: within noise -> keep current TREND_FRONT
     else:
-        TREND_FRONT = 0
-    PREV_FRONT = front
+        trend_front = 0
+    prev_front = front
 
-    if PREV_BACK is not None:
-        if back < PREV_BACK - TREND_EPS:
-            TREND_BACK += 1
-        elif back > PREV_BACK + TREND_EPS:
-            TREND_BACK = 0
+    if prev_back is not None:
+        if back < prev_back - trend_eps:
+            trend_back += 1
+        elif back > prev_back + trend_eps:
+            trend_back = 0
     else:
-        TREND_BACK = 0
-    PREV_BACK = back
+        trend_back = 0
+    prev_back = back
 
     # Only trigger if inside threshold AND trending closer
     trigger = None  # "FRONT" | "BACK" | None
-    if front < BLOCK_THR and TREND_FRONT >= TREND_MIN:
+    if front < block_thr and trend_front >= trend_min:
         trigger = "FRONT"
-    elif back < BLOCK_THR and TREND_BACK >= TREND_MIN:
+    elif back < block_thr and trend_back >= trend_min:
         trigger = "BACK"
 
     if not trigger:
         return
 
     if trigger == "FRONT":
-        left_clear  = _min_of(state, LEFT_FWD)
+        left_clear = _min_of(state, LEFT_FWD)
         right_clear = _min_of(state, RIGHT_FWD)
     else:
-        left_clear  = _min_of(state, LEFT_BACK)
+        left_clear = _min_of(state, LEFT_BACK)
         right_clear = _min_of(state, RIGHT_BACK)
 
     # Pick the clearer side
     if right_clear >= left_clear:
-        MODE = "RIGHT_A"
+        mode = "RIGHT_A"
     else:
-        MODE = "LEFT_A"
-    STEPS_LEFT = N_SWITCH
+        mode = "LEFT_A"
+    steps_left = n_switch
 
 def _step_lane_action():
-    """Emit one steering action for the lane switch FSM and advance it."""
-    global MODE, STEPS_LEFT
-    if MODE == "IDLE":
+    """One steering action for the lane switch FSM and advance it."""
+    global mode, steps_left
+    if mode == "IDLE":
         return "NOTHING"
 
-    if MODE == "RIGHT_A":
+    if mode == "RIGHT_A":
         act = "STEER_RIGHT"
-    elif MODE == "RIGHT_B":
+    elif mode == "RIGHT_B":
         act = "STEER_LEFT"
-    elif MODE == "LEFT_A":
+    elif mode == "LEFT_A":
         act = "STEER_LEFT"
-    elif MODE == "LEFT_B":
+    elif mode == "LEFT_B":
         act = "STEER_RIGHT"
     else:
         act = "NOTHING"
 
-    STEPS_LEFT -= 1
-    if STEPS_LEFT <= 0:
-        if MODE == "RIGHT_A":
-            MODE, STEPS_LEFT = "RIGHT_B", N_SWITCH
-        elif MODE == "LEFT_A":
-            MODE, STEPS_LEFT = "LEFT_B", N_SWITCH
+    steps_left -= 1
+    if steps_left <= 0:
+        if mode == "RIGHT_A":
+            mode, steps_left = "RIGHT_B", n_switch
+        elif mode == "LEFT_A":
+            mode, steps_left = "LEFT_B", n_switch
         else:
-            MODE, STEPS_LEFT = "IDLE", 0
+            mode, steps_left = "IDLE", 0
     return act
 
 def _speed_action(state):
-    # pause accel/decel while steering
-    if MODE != "IDLE":
+    # pause accel/decel while steering - This is just a failsafe
+    if mode != "IDLE":
         return "NOTHING"
 
     vx = float((state.get("velocity") or {}).get("x", 0.0) or 0.0)
@@ -179,89 +174,90 @@ def _speed_action(state):
     # vy = float((state.get("velocity") or {}).get("y", 0.0) or 0.0)
     # print("vy", vy)
 
-    if math.isclose(vx, TARGET_VX, rel_tol=REL_TOL, abs_tol=ABS_TOL):
+    if math.isclose(vx, target_vx, rel_tol=rel_tol, abs_tol=abs_tol):
         return "NOTHING"
 
-    if vx < TARGET_VX - VX_BAND:
+    if vx < target_vx - vx_band:
         return "ACCELERATE"
-    if vx > TARGET_VX + VX_BAND:
+    if vx > target_vx + vx_band:
         return "DECELERATE"
     return "NOTHING"
 
-LAST_TICK = None  # track elapsed_ticks across calls
+last_tick = None
 
+# Reset all state variables to prevent it from remembering anything from previous runs
 def _reset_state():
-    global MODE, STEPS_LEFT
-    global PREV_FRONT, PREV_BACK, TREND_FRONT, TREND_BACK
-    global LAST_TICK
-    global RAMP_TICKS
+    global mode, steps_left
+    global prev_front, prev_back, trend_front, trend_back
+    global last_tick
+    global ramp_ticks
 
-    RAMP_TICKS = 0
-    MODE = "IDLE"
-    STEPS_LEFT = 0
-    PREV_FRONT = None
-    PREV_BACK = None
-    TREND_FRONT = 0
-    TREND_BACK = 0
-    LAST_TICK = None
+    ramp_ticks = 0
+    mode = "IDLE"
+    steps_left = 0
+    prev_front = None
+    prev_back = None
+    trend_front = 0
+    trend_back = 0
+    last_tick = None
 
 
 def return_action(state: dict):
-    global LAST_TICK, MODE, TARGET_VX, CURRENT_TARGET_VX, RAMP_TICKS
+    global last_tick, mode, target_vx, current_target_vx, ramp_ticks
 
-    t = int((state.get("elapsed_ticks") or 0))
-    did_crash = bool(state.get("did_crash", False))
+    t = int((state.get("elapsed_ticks") or 0)) # Tick count from the game
+    did_crash = bool(state.get("did_crash", False)) # Crash status from the game
 
     # Reset variables
-    if did_crash or t == 0 or (LAST_TICK is not None and t < LAST_TICK):
-        _reset_state()
+    if did_crash or t == 0 or (last_tick is not None and t < last_tick):
+        _reset_state() # reset all state variables
+        print("RESET")
 
-    # --- RAMP that ignores steering time ---
-    # compute dt using the *previous* LAST_TICK (don't overwrite it yet)
-    prev_t = LAST_TICK
+    # compute dt using the previous last_tick. I had to create a separate tick to prevent ramping the acceleration
+    # too much after steering
+    prev_t = last_tick
     dt = 0 if prev_t is None else max(0, t - prev_t)
 
-    if MODE == "IDLE":
-        # only count idle time; steering time doesn't increase the ramp
-        RAMP_TICKS += dt
-    # now update LAST_TICK for the next call
-    LAST_TICK = t
+    if mode == "IDLE":
+        # Only count idle time. Steering time does not increase the ramp
+        ramp_ticks += dt
+    # Update last_tick for the next call
+    last_tick = t
 
-    base_target = BASE_TARGET_VX + RAMP_PER_TICK * RAMP_TICKS
-    target = min(MAX_TARGET_VX, base_target)
+    # Calculate the target velocity
+    base_target = base_target_vx + ramp_per_tick * ramp_ticks
+    target = min(max_target_vx, base_target)
 
-    # Optional adaptive nudge (unchanged)
+    # Adaptive nudge
     try:
-        if TREND_FRONT >= TREND_MIN and TREND_BACK == 0:
+        if trend_front >= trend_min and trend_back == 0:
             target -= 0.4
-        elif TREND_BACK >= TREND_MIN and TREND_FRONT == 0:
+        elif trend_back >= trend_min and trend_front == 0:
             target += 0.4
     except NameError:
         pass
 
     # Clamp and apply
-    CURRENT_TARGET_VX = max(BASE_TARGET_VX, min(MAX_TARGET_VX, target))
-    TARGET_VX = CURRENT_TARGET_VX
+    current_target_vx = max(base_target_vx, min(max_target_vx, target))
+    target_vx = current_target_vx
 
     # If not already switching lanes, check sensors to possibly start
-    if MODE == "IDLE":
+    if mode == "IDLE":
         _maybe_start_switch(state)
 
     actions = []
-    for _ in range(BATCH_SIZE):
-        if MODE != "IDLE":
+    for _ in range(batch_size):
+        if mode != "IDLE":
             actions.append(_step_lane_action())
         else:
             actions.append(_speed_action(state))
     return actions
 
 
-
-
 if __name__ == '__main__':
     import pygame
     from src.game.core import initialize_game_state, game_loop
-    seed_value = 8
+    seed_value = 2
     pygame.init()
     initialize_game_state("http://localhost:9052/predict", seed_value)
     game_loop(verbose=True) # For pygame window
