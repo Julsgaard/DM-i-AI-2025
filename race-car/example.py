@@ -55,6 +55,10 @@ ramp_per_tick = 0.05 # vx gained per tick
 ramp_ticks = 0 # Only counts when NOT steering
 current_target_vx = base_target_vx  # Computed each call
 
+# For when sides are blocked
+side_clear_thr = 350.0 # If side sensors < this, consider it blocked
+pending_escape = False # True if we need to escape a blocked side
+
 rel_tol = 1e-6 # For math.isclose
 abs_tol = 1e-3 # For math.isclose
 
@@ -64,10 +68,10 @@ abs_tol = 1e-3 # For math.isclose
 #  This is confirmed by what it says in place_car function in core.py
 
 # Sensor groups
-left_fwd   = ("front_left_front", "left_side_front")
-right_fwd  = ("front_right_front", "right_side_front")
-left_back  = ("back_left_back", "left_side_back")
-right_back = ("back_right_back", "right_side_back")
+left_fwd   = ("left_side_front", "left_front", "front_left_front")
+right_fwd  = ("front_right_front", "right_front", "right_side_front")
+right_back = ("right_side_back", "right_back", "back_right_back")
+left_back  = ("back_left_back", "left_back", "left_side_back")
 
 
 def _sensor(state, name, default=1000.0):
@@ -81,21 +85,19 @@ def _min_of(state, names):
 def _maybe_start_switch(state):
     """
     Trigger a lane switch if front or back is blocked.
-    Choose clearer side: compare left vs right groups (front case uses FWD groups,
-    back case uses BACK groups). No randomness.
+    Choose clearer side: compare left vs right groups (front case uses FWD groups, back case uses BACK groups).
     """
-    global mode, steps_left
-    global prev_front, prev_back, trend_front, trend_back
+    global mode, steps_left, prev_front, prev_back, trend_front, trend_back, pending_escape
 
     front = _sensor(state, "front", 1000.0)
     back  = _sensor(state, "back", 1000.0)
 
-    # update trends (are they getting closer or farther?)
+    # Update trends - are the cars getting closer or further away?
     if prev_front is not None:
         if front < prev_front - trend_eps:
-            trend_front += 1 # getting closer
+            trend_front += 1 # Getting closer
         elif front > prev_front + trend_eps:
-            trend_front = 0 # moving away -> cancel trend
+            trend_front = 0 # Moving away - cancel trend
         # else: within noise -> keep current TREND_FRONT
     else:
         trend_front = 0
@@ -120,18 +122,39 @@ def _maybe_start_switch(state):
     if not trigger:
         return
 
-    if trigger == "FRONT":
-        left_clear = _min_of(state, left_fwd)
-        right_clear = _min_of(state, right_fwd)
-    else:
-        left_clear = _min_of(state, left_back)
-        right_clear = _min_of(state, right_back)
+    # Compute side clearance using both front and back groups
+    left_f = _min_of(state, left_fwd)
+    left_b = _min_of(state, left_back)
+    right_f = _min_of(state, right_fwd)
+    right_b = _min_of(state, right_back)
 
-    # Pick the clearer side
-    if right_clear >= left_clear:
+    # A side is enterable only if both its front and back are clear enough
+    left_enterable = min(left_f, left_b) >= side_clear_thr
+    right_enterable = min(right_f, right_b) >= side_clear_thr
+
+    # TODO: Should probably not run the target velocity while in escape mode
+    # Boxed-in check
+    if not left_enterable and not right_enterable:
+        # No safe lane to enter now. Stay in escape mode - Meaning that it does not start a turn and starts decelerating
+        pending_escape = True
+        return
+    else:
+        # At least one side is fully clear before we can exit escape mode
+        pending_escape = False
+
+    # Pick side to switch into
+    # Prefer a fully enterable side - If both are enterable, choose the CLEARER one
+    # This also helps with staying in the middle lane
+    if left_enterable and not right_enterable:
+        mode = "LEFT_A"
+    elif right_enterable and not left_enterable:
         mode = "RIGHT_A"
     else:
-        mode = "LEFT_A"
+        # Both enterable - Choose the side with the larger bottleneck distance
+        left_bottleneck = min(left_f, left_b)
+        right_bottleneck = min(right_f, right_b)
+        mode = "RIGHT_A" if right_bottleneck >= left_bottleneck else "LEFT_A"
+
     steps_left = n_switch
 
 def _step_lane_action():
@@ -162,7 +185,7 @@ def _step_lane_action():
     return act
 
 def _speed_action(state):
-    # pause accel/decel while steering - This is just a failsafe
+    # Pause accelerate/decelerate while steering - This is just a failsafe
     if mode != "IDLE":
         return "NOTHING"
 
@@ -172,9 +195,23 @@ def _speed_action(state):
     # vy = float((state.get("velocity") or {}).get("y", 0.0) or 0.0)
     # print("vy", vy)
 
+    # Escape behavior
+    if pending_escape:
+        front = _sensor(state, "front", 1000.0)
+        back = _sensor(state, "back", 1000.0)
+        # If front is the threat (or both) slow down. If back is the threat speed up a bit
+        if front < block_thr and (back >= block_thr or front <= back):
+            print("ESCAPE DECELERATE")
+            return "DECELERATE"
+        if back < block_thr and front >= block_thr:
+            print("ESCAPE ACCELERATE")
+            return "ACCELERATE"
+        print("ESCAPE DEFAULT")
+        # Else prefer decelerate
+        return "ACCELERATE"
+
     if math.isclose(vx, target_vx, rel_tol=rel_tol, abs_tol=abs_tol):
         return "NOTHING"
-
     if vx < target_vx - vx_band:
         return "ACCELERATE"
     if vx > target_vx + vx_band:
@@ -185,10 +222,7 @@ last_tick = None
 
 # Reset all state variables to prevent it from remembering anything from previous runs
 def _reset_state():
-    global mode, steps_left
-    global prev_front, prev_back, trend_front, trend_back
-    global last_tick
-    global ramp_ticks
+    global mode, steps_left, prev_front, prev_back, trend_front, trend_back, last_tick, ramp_ticks, pending_escape
 
     ramp_ticks = 0
     mode = "IDLE"
@@ -198,7 +232,7 @@ def _reset_state():
     trend_front = 0
     trend_back = 0
     last_tick = None
-
+    pending_escape = False
 
 def return_action(state: dict):
     global last_tick, mode, target_vx, current_target_vx, ramp_ticks
@@ -255,7 +289,7 @@ def return_action(state: dict):
 if __name__ == '__main__':
     import pygame
     from src.game.core import initialize_game_state, game_loop
-    seed_value = 2
+    seed_value = 4
     pygame.init()
     initialize_game_state("http://localhost:9052/predict", seed_value)
     game_loop(verbose=True) # For pygame window
