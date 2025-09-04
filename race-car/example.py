@@ -51,7 +51,7 @@ vx = 10 # The velocity x from the sensor - Only used for printing
 vx_band = 0.15 # Dead zone around target_vx
 base_target_vx = 10.05 # Start slow
 max_target_vx = 999 # The maximum target VX
-ramp_per_tick = 0.5 # vx gained per tick
+ramp_per_tick = 0.0525 # vx gained per tick
 ramp_ticks = 0 # Only counts when NOT steering
 current_target_vx = base_target_vx  # Computed each call
 
@@ -309,7 +309,7 @@ def return_action(state: dict):
 if __name__ == '__main__':
     import pygame
     from src.game.core import initialize_game_state, game_loop
-    seed_value = 4
+    seed_value = None
     pygame.init()
     initialize_game_state("http://localhost:9052/predict", seed_value)
     game_loop(verbose=True) # For pygame window
