@@ -129,7 +129,13 @@ def _maybe_start_switch(state):
     if not trigger:
         return
 
-    # TODO: MAKE SURE THIS IS CORRECT!!!!
+    if trigger == "BACK":
+        print("TRIGGER BACK")
+        # Accelerate if back is the problem
+        mode = "IDLE"
+        _speed_action(state)
+        return
+
     # Forward-diagonals (primary look-ahead per side)
     flf = _sensor(state, "front_left_front", 1000.0)
     frf = _sensor(state, "front_right_front", 1000.0)
