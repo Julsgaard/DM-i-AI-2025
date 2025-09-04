@@ -1,6 +1,6 @@
 import pygame
 from time import sleep
-#import requests
+import requests
 #from typing import List, Optional
 from ..mathematics.randomizer import seed, random_choice, random_number
 from ..elements.car import Car
@@ -16,6 +16,10 @@ LANE_COUNT = 5
 CAR_COLORS = ['yellow', 'blue', 'red']
 MAX_TICKS = 60 * 60  # 60 seconds @ 60 fps
 MAX_MS = 60 * 1000600   # 60 seconds flat
+
+# Reuse one TCP connection across all posts (keep-alive)
+session = requests.Session()
+session.headers.update({"Connection": "keep-alive"})
 
 # Define game state
 class GameState:
@@ -254,11 +258,44 @@ def game_loop(verbose: bool = True, log_actions: bool = True, log_path: str = "a
 
         if not actions:
             # Handle action - get_action() is a method for using arrow keys to steer - implement own logic here!
-            action_list = get_action()
-            
-            for act in action_list:
-                actions.append(act)
-        action = actions.pop()
+            # action_list = get_action()
+            #
+            # for act in action_list:
+            #     actions.append(act)
+
+            for sensor in STATE.sensors:
+                sensor.update()
+                # print(sensor)
+            # Uses the reading data from the sensors. If there is none or an exception set it to 1000
+            sensor_data = {}
+            for i, s in enumerate(STATE.sensors):
+                name = getattr(s, "name", f"sensor_{i}")
+                if hasattr(s, "reading"):
+                    try:
+                        sensor_data[name] = float(getattr(s, "reading"))
+                    except Exception:
+                        sensor_data[name] = 1000.0
+                else:
+                    sensor_data[name] = float(getattr(s, "sensor_strength", 1000.0))
+
+            payload = {
+                "did_crash": STATE.crashed,
+                "elapsed_ticks": STATE.ticks,
+                "distance": STATE.distance,
+                "velocity": {"x": STATE.ego.velocity.x, "y": STATE.ego.velocity.y},
+                "sensors": sensor_data
+            }
+
+            try:
+                resp = session.post("http://localhost:9052/predict", json=payload, timeout=0.15)
+                resp.raise_for_status()
+                actions = resp.json().get("actions", ["NOTHING"])
+                if not actions:
+                    actions = ["NOTHING"]
+            except Exception as e:
+                print(f"API error: {e}")
+                actions = ["NOTHING"]
+        action = actions.pop(0)
 
         # Log the action with tick
         if log_actions:
