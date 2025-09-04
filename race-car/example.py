@@ -1,6 +1,5 @@
 import math
 
-
 '''
 Set seed_value to None for random seed.
 Within game_loop, change get_action() to your custom models prediction for local testing and training.
@@ -48,6 +47,7 @@ batch_size = 6 # How many actions performed per call
 n_switch = 48 # Steps per half-switch (A or B)
 block_thr = 999.0 # Obstacle if sensor < this
 target_vx = 20 # Desired vx - Is updated each call
+vx = 10 # The velocity x from the sensor - Only used for printing
 vx_band = 0.15 # Dead zone around target_vx
 base_target_vx = 10.05 # Start slow
 max_target_vx = 999 # The maximum target VX
@@ -63,6 +63,9 @@ pending_escape = False # True if we need to escape a blocked side
 
 rel_tol = 1e-6 # For math.isclose
 abs_tol = 1e-3 # For math.isclose
+
+speedup_tick = 500 # After this tick the target speed will increase faster
+speedup_multiplier = 1.45 # The added to the speedup per tick
 
 # TODO: ---DONE--- It needs to gradually accelerate infinitely. This is because the cars are spawning at the same speed as the race-car.
 #  If i only accelerate it will be too fast to dodge, but if i gradually accelerate it might be enough to dodge.
@@ -193,12 +196,13 @@ def _step_lane_action():
     return act
 
 def _speed_action(state):
+    global vx
+
     # Pause accelerate/decelerate while steering - This is just a failsafe
     if mode != "IDLE":
         return "NOTHING"
 
     vx = float((state.get("velocity") or {}).get("x", 0.0) or 0.0)
-    print("vx", vx)
 
     # vy = float((state.get("velocity") or {}).get("y", 0.0) or 0.0)
     # print("vy", vy)
@@ -245,6 +249,8 @@ def _reset_state():
 def return_action(state: dict):
     global last_tick, mode, target_vx, current_target_vx, ramp_ticks
 
+    print("Velocity X: ", vx)
+
     t = int((state.get("elapsed_ticks") or 0)) # Tick count from the game
     did_crash = bool(state.get("did_crash", False)) # Crash status from the game
 
@@ -261,11 +267,17 @@ def return_action(state: dict):
     if mode == "IDLE":
         # Only count idle time. Steering time does not increase the ramp
         ramp_ticks += dt
+
     # Update last_tick for the next call
     last_tick = t
 
     # Calculate the target velocity
-    base_target = base_target_vx + ramp_per_tick * ramp_ticks
+    if t < speedup_tick:
+        base_target = base_target_vx + ramp_per_tick * ramp_ticks
+        # print("old", base_target)
+    else:
+        base_target = base_target_vx + ramp_per_tick * speedup_multiplier * ramp_ticks
+        # print("new", base_target)
     target = min(max_target_vx, base_target)
 
     # Adaptive nudge
